@@ -1,6 +1,10 @@
 const repl = require('repl');
 
-const tokenize = (chars) => chars.replace(/\(/g, ' ( ').replace(/\)/g, ' ) ').split(' ').filter(x => !!x);
+const tokenize = (chars) => chars
+  .replace(/\(/g, ' ( ')
+  .replace(/\)/g, ' ) ')
+  .split(' ')
+  .filter(x => !!x);
 
 const parse = (program) => readFromTokens(tokenize(program));
 
@@ -33,69 +37,77 @@ const atom = (token) => {
   }
 };
 
+const ops = {
+  ['+']: (...args) => args.reduce((a, b) => a + b),
+  ['-']: (...args) => args.reduce((a, b) => a - b),
+  ['*']: (...args) => args.reduce((a, b) => a * b),
+  ['/']: (...args) => args.reduce((a, b) => a / b),
+  ['>']: (x, y) => x > y ,
+  ['<']: (x, y) => x < y,
+  ['>=']: (x, y) => x >= y,
+  ['<=']: (x, y) => x <= y,
+  ['=']: (x, y) => x === y,
+  ['append']: (...args) => args.reduce((acc, b) => acc.concat(b), []),
+  ['apply']: Function.apply,
+  ['begin']: (...args) => args[-1],
+  ['car']: (list) => list[0] || null,
+  ['cdr']: (list) => list.slice(1).length && list.slice(1) || null,
+  ['cons']: (x, y) => [x].concat(y),
+  ['eq?']: Object.is,
+  ['equal?']: (x, y) => x === y,
+  ['length']: (x) => x.length,
+  ['list']: (...args) => args,
+  ['list?']: (x) => Array.isArray(x),
+  ['map']: (fn, items) => items.map(fn),
+  ['not']: (x) => x && null || true,
+  ['null?']: (x) => x === [],
+  ['number?']: (x) => typeof x === 'number',
+  ['pi']: Math.PI,
+  ['procedure?']: (x) => typeof x === 'function',
+  ['round']: Math.round,
+  ['symbol?']: (x) => typeof x === 'string',
+};
+
 const List = [];
+
 const Env = (params = [], args = [], outer = null) => {
   let obj = {
-    outer: outer,
+    ...ops,
     ...params.reduce((acc, p, i) => ({ ...acc, [p]: args[i] }), {}),
+    outer,
   };
   obj.find = (v) => {
-    if (obj[v]) {
+    if (obj[v] || obj[v] == 0) {
       return obj; 
     } else {
-      return outer && outer.find(v);
+      return outer && outer.find(v) || Error('Oops');
     }
   };
   return obj;
 };
 
-const Procedure = (params, body, env) => (...args) => evalz(body, Env(params, args, env))
+const Procedure = (params, body, env) => (...args) => {
+  return evalz(body, Env(params, args, env))
+};
 
-const standardEnv = () => ({
-  ...Env(),
-  ...{
-    '+': (...args) => args.reduce((acc, b) => acc + b, 0),
-    '-': (...args) => args.reduce((acc, b) => acc - b, 0),
-    '*': (...args) => args.reduce((a, b) => a * b),
-    '/': (...args) => args.reduce((a, b) => a / b),
-    '>': (x, y) => x > y,
-    '<': (x, y) => x < y,
-    '>=': (x, y) => x >= y,
-    '<=': (x, y) => x <= y,
-    '=': (x, y) => x === y,
-    'append': (...args) => args.reduce((acc, b) => acc.concat(b), []),
-    'apply': Function.apply,
-    'begin': (...args) => args[-1],
-    'car': (...args) => args[0],
-    'cdr': (...args) => args.slice(1),
-    'cons': (x, y) => [x].concat(y),
-    'eq?': Object.is,
-    'equal?': (x, y) => x === y,
-    'length': (x) => x.length,
-    'list': (...args) => args,
-    'list?': (x) => Array.isArray(x),
-    'map': Array.map,
-    'not': (x) => x && null || true,
-    'null?': (x) => x === [],
-    'number?': (x) => typeof x === 'number',
-    'pi': Math.PI,
-    'procedure?': (x) => typeof x === 'function',
-    'round': Math.round,
-    'symbol?': (x) => typeof x === 'string',
+let globalEnv = Env();
+
+const testIf = (exp, conseq, alt) => {
+  if (!exp) {
+    return alt;
+  } else if (Array.isArray(exp)) {
+    if (exp.length > 0) {
+      return conseq;
+    } else {
+      return alt;
+    }
+  } else {
+    return conseq;
   }
-});
-
-console.log({ ...Env(), ...{ '*': 'COOL' }});
-
-console.log(standardEnv().find('*'));
-
-
-const globalEnv = standardEnv();
-console.log(Object.keys(globalEnv));
+}
 
 const evalz = (x, env = globalEnv) => {
   if (typeof x === 'string') {
-    console.log(Object.keys(env));
     return env.find(x)[x]
   } else if (!Array.isArray(x)) {
     return x;
@@ -104,7 +116,7 @@ const evalz = (x, env = globalEnv) => {
     return exp;
   } else if (x[0] === 'if') {
     let [_, test, conseq, alt] = x;
-    let exp = evalz(test, env) ? conseq : alt;
+    let exp = testIf(evalz(test, env));
     return evalz(exp, env);
   } else if (x[0] === 'define') {
     let [_, key, exp] = x;
@@ -116,27 +128,30 @@ const evalz = (x, env = globalEnv) => {
     let [_, params, body] = x;
     return Procedure(params, body, env);
   } else {
-    console.log('Evaling other: ', x);
+    if (x == 0) {
+      return Number(0);
+    }
     let proc = evalz(x[0], env);
-    console.log(x[0], 'Evaled to: ', proc);
-    let args = x.splice(1).map(arg => evalz(arg, env));
-    console.log('Calling proc: ', proc, 'with args: ', args)
+    let args = x.slice(1);
+    args = args.map(a => {
+      return evalz(a, env)
+    });
     return proc(...args);
   }
 }
 
 repl.start({
-  prompt: 'nelly> ',
+  prompt: 'nisp > ',
   eval: (cmd, context, filename, callback) => {
     let val = evalz(parse(cmd));
-    if (val) console.log(nelStr(val));
+    if (val || val == 0) console.log(nelStr(val));
     callback(null);
   }
 });
 
-const nelStr = (exp) => {
+const nispStr = (exp) => {
   if (Array.isArray(exp)) {
-    return (`( ${exp.map(e => nelStr(e)).join(' ')})`);
+    return (`( ${exp.map(e => nelStr(e)).join(' ')} )`);
   } else {
     return String(exp);
   }
